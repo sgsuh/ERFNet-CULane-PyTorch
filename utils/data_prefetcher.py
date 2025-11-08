@@ -1,0 +1,52 @@
+"""
+Create: 2022.03.08
+Author: SG.SUH
+Python: 3.7
+PyTorch: 1.8
+"""
+
+import torch
+
+class DataPrefetcher:
+    def __init__(self, loader):
+        self.loader = iter(loader)
+        self.stream = torch.cuda.Stream()
+        self.input_cuda = self.input_cuda_for_image
+        self.record_stream = DataPrefetcher.record_stream_for_image
+        self.preload()
+
+    def preload(self):
+        try:
+            self.next_input, self.next_target = next(self.loader)
+        except StopIteration:
+            self.next_input = None
+            self.next_target = None
+
+            return
+
+        with torch.cuda.stream(self.stream):
+            self.input_cuda()
+            self.next_target = self.next_target.cuda(non_blocking = True)
+
+    def next(self):
+        torch.cuda.current_stream().wait_stream(self.stream)
+        
+        input = self.next_input
+        target = self.next_target
+
+        if input is not None:
+            self.record_stream(input)
+
+        if target is not None:
+            target.record_stream(torch.cuda.current_stream())
+
+        self.preload()
+
+        return input, target
+
+    def input_cuda_for_image(self):
+        self.next_input = self.next_input.cuda(non_blocking = True)
+
+    @staticmethod
+    def record_stream_for_image(input):
+        input.record_stream(torch.cuda.current_stream())
